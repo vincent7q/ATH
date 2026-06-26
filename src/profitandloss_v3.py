@@ -14,11 +14,11 @@ Version  Date        Author    Comment
 
 
 import time
-import common.gfuncs as G;
 import pandas as pd;
 from statistics import mean;
 import csv;
 import statistics as stat;
+import datetime;
 
 
 
@@ -26,6 +26,22 @@ import statistics as stat;
 PLOTGRAPH=False;             #True to record data for plotgragh use   False: for production
 CAPTURETRADEDETAILS=False;   #capture all trade details
 RISK_FREE_RATIO=0.03;           #annual risk-free rate
+
+def timestamp_to_str(input,isDaily=False):
+    '''
+    unix time stamp to string
+    in:
+        input: int 
+    out: 
+        string
+    '''
+    if input>9999999999:   #in case input contain min seconds
+        input=input/1000;
+
+    if isDaily:
+        return datetime.datetime.fromtimestamp(input, datetime.timezone.utc).strftime('%Y-%m-%d')
+    else:
+        return datetime.datetime.fromtimestamp(input, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 def count_positive_negative(lst):
     """
@@ -349,7 +365,7 @@ class PL():
 
             self.summary.add_data(self.trigger, PL_percent);   # keep summary stats consistent with addnew()
             # Updated header format: coin,trigger,trigger_time,trigger_DT,trigger_price,settle_time,settle_DT,settle_price,PL,PL_percent,factor
-            self.df[self.trigger_time] = [self.currency,self.trigger,self.trigger_time,G.timestamp_to_str(self.trigger_time),average_open_price ,now,G.timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
+            self.df[self.trigger_time] = [self.currency,self.trigger,self.trigger_time,timestamp_to_str(self.trigger_time),average_open_price ,now,timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
 
             if self.plotgraph:                                   #for plot graph data use
                 self.tradelist_close.loc[now]=[now,price];
@@ -392,7 +408,7 @@ class PL():
             if self.capturedetails:
                 # Modified to include factor in the details
                 # coin,trigger_time,trigger_DT,action,price,unit,factor
-                self.df_details[now]=[self.currency,now,G.timestamp_to_str(now),action,price,unit,factor];  
+                self.df_details[now]=[self.currency,now,timestamp_to_str(now),action,price,unit,factor];  
                 
             if self.in_trade:           #if trade status, settle with this action
 
@@ -420,7 +436,7 @@ class PL():
 
                         self.summary.add_data(self.trigger,PL_percent);
                         #tx header: coin,action, open DT, open datetime, open price, close DT, close datetime, close price, PL, PL%, factor
-                        self.df[self.trigger_time]=[self.currency,self.trigger,self.trigger_time,G.timestamp_to_str(self.trigger_time),average_open_price,now,G.timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
+                        self.df[self.trigger_time]=[self.currency,self.trigger,self.trigger_time,timestamp_to_str(self.trigger_time),average_open_price,now,timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
                 
                     
 
@@ -457,7 +473,7 @@ class PL():
 
                         self.summary.add_data(self.trigger,PL_percent);
                         #tx header: coin,openaction, open DT, open datetime, open price, close DT, close datetime, close price, PL, PL%, factor
-                        self.df[self.trigger_time]=[self.currency, self.trigger,self.trigger_time,G.timestamp_to_str(self.trigger_time),average_open_price,now,G.timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
+                        self.df[self.trigger_time]=[self.currency, self.trigger,self.trigger_time,timestamp_to_str(self.trigger_time),average_open_price,now,timestamp_to_str(now),price,PL,PL_percent,weighted_factor];
                         if self.plotgraph:                                   #for plot graph data use
                             self.tradelist_close.loc[now]=[now,price];
                     
@@ -487,7 +503,7 @@ class PL():
             pass;
 
         except Exception as ex:
-            G.println('PL addnew Error:%s'%str(ex))
+            print('PL addnew Error:%s'%str(ex))
 
     def exportToFile(self):
         f = open(self.exportfilepath_header, 'a',newline='')
@@ -544,7 +560,19 @@ class PL():
 
         sharpe_ratio = self._annualized_sharpe(list_PL_percent, sd)
         return NoOfTX, total_PL_percent, PL_total, round(sharpe_ratio, 3), max_negative_percent
-            
+
+    def profit_factor(self):
+        """Gross profit / gross loss across completed trades (PRD §4). inf if no losing trades."""
+        import metrics
+        return metrics.profit_factor([float(row[8]) for row in self.df.values()])  # row[8] = PL amount
+
+    def max_drawdown_pct(self):
+        """Deepest peak-to-trough decline (%) on the equity curve built from per-trade returns,
+        ordered by close timestamp (row[5] = close ts; row[9] = PL%). Returns <= 0.0."""
+        import metrics
+        ordered = sorted(self.df.values(), key=lambda row: row[5])
+        return metrics.max_drawdown_pct([float(row[9]) for row in ordered])
+
 
 
 if __name__ == "__main__":
