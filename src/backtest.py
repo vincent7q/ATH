@@ -19,6 +19,7 @@ import sweep
 DB_PATH = os.path.join(os.path.dirname(__file__), "ipo.db")  # price database
 OUT_PATH = "report_ipo.csv"       # output CSV (parameter matrix)
 FORCE_CLOSE = True                # mark-to-market positions still open at the last bar
+INTRABAR_STOPS = True             # realistic exits: stop triggers on the bar Low, fills at min(stop, Open)
 LIMIT = None                      # cap number of symbols (e.g. 20 for a quick test); None = all
 
 # --- Indicator windows (fixed across the whole sweep) ---
@@ -38,7 +39,7 @@ SWEEP_GRID = {
 
 # ============================================================================
 
-METRIC_COLS = ["trade_count", "win_rate_pct", "net_profit_pct", "profit_factor", "max_drawdown_pct"]
+METRIC_COLS = ["trade_count", "win_rate_pct", "sum_return_pct", "profit_factor", "max_drawdown_pct"]
 
 
 def prepare_all(conn, symbols, atr_period=14, roll_window=252, dollar_vol_window=5):
@@ -53,7 +54,8 @@ def prepare_all(conn, symbols, atr_period=14, roll_window=252, dollar_vol_window
 
 
 def run(db_path, grid=SWEEP_GRID, force_close=False, limit=None,
-        atr_period=14, roll_window=252, dollar_vol_window=5, fixed_overrides=None):
+        atr_period=14, roll_window=252, dollar_vol_window=5, fixed_overrides=None,
+        intrabar_stops=False):
     """Load the DB, prepare every symbol once, and run the full sweep. Returns result rows."""
     conn = db.connect(db_path)
     try:
@@ -64,7 +66,7 @@ def run(db_path, grid=SWEEP_GRID, force_close=False, limit=None,
     finally:
         conn.close()
 
-    fixed = {"force_close_at_end": force_close,
+    fixed = {"force_close_at_end": force_close, "intrabar_stops": intrabar_stops,
              "atr_period": atr_period, "roll_window": roll_window,
              "dollar_vol_window": dollar_vol_window}
     if fixed_overrides:
@@ -84,7 +86,7 @@ def write_csv(rows, path, grid=SWEEP_GRID):
 def main():
     rows = run(DB_PATH, grid=SWEEP_GRID, force_close=FORCE_CLOSE,
                limit=LIMIT, atr_period=ATR_PERIOD, roll_window=ROLL_WINDOW,
-               dollar_vol_window=DOLLAR_VOL_WINDOW)
+               dollar_vol_window=DOLLAR_VOL_WINDOW, intrabar_stops=INTRABAR_STOPS)
     write_csv(rows, OUT_PATH, grid=SWEEP_GRID)
     print(f"Wrote {len(rows)} parameter rows -> {OUT_PATH}")
 

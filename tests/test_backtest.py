@@ -45,10 +45,10 @@ def test_run_pipeline_produces_results(db_path):
 
 def test_write_csv_has_header_and_rows(tmp_path):
     rows = [{"initial_cutloss_pct": 0.05, "trade_count": 2, "win_rate_pct": 0.0,
-             "net_profit_pct": -9.8, "profit_factor": 0.0, "max_drawdown_pct": -9.8}]
+             "sum_return_pct": -9.8, "profit_factor": 0.0, "max_drawdown_pct": -9.8}]
     out = tmp_path / "results.csv"
     backtest.write_csv(rows, str(out), grid={"initial_cutloss_pct": [0.05]})
     with open(out, newline="") as f:
         read = list(csv.DictReader(f))
     assert len(read) == 1
-    assert "initial_cutloss_pct" in read[0] and "net_profit_pct" in read[0]
+    assert "initial_cutloss_pct" in read[0] and "sum_return_pct" in read[0]

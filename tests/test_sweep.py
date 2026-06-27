@@ -27,5 +27,5 @@ def test_run_sweep_one_row_per_combo():
     assert len(results) == 4                                   # 2 x 2
     row = results[0]
     for key in ("initial_cutloss_pct", "atr_multiplier", "trade_count",
-                "win_rate_pct", "net_profit_pct", "profit_factor", "max_drawdown_pct"):
+                "win_rate_pct", "sum_return_pct", "profit_factor", "max_drawdown_pct"):
         assert key in row

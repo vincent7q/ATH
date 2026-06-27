@@ -21,6 +21,8 @@ class Prepared:
     dt: np.ndarray
     date: np.ndarray
     close: np.ndarray
+    open: np.ndarray                 # exit-bar open, for realistic gap-through fills (intrabar_stops)
+    low: np.ndarray                  # exit-bar low, for intrabar stop triggers (intrabar_stops)
     atr: np.ndarray
     advol: np.ndarray
     ipo: np.ndarray
@@ -38,6 +40,8 @@ def prepare_symbol(df: pd.DataFrame, atr_period: int = 14, roll_window: int = 25
         dt=df["DT"].to_numpy(dtype=np.int64),
         date=df["Date"].to_numpy(),
         close=close.to_numpy(dtype=float),
+        open=df["Open"].to_numpy(dtype=float),
+        low=df["Low"].to_numpy(dtype=float),
         atr=indicators.atr_wilder(df["High"], df["Low"], close, atr_period).to_numpy(dtype=float),
         advol=indicators.avg_dollar_volume(close, df["Volume"], dollar_vol_window).to_numpy(dtype=float),
         ipo=indicators.days_since_ipo(n),
@@ -66,14 +70,21 @@ def _exit_reason(dynamic_stop: float, atr_stop: float, entry_price: float) -> st
     return "hard_stop"
 
 
-def run_state_machine(p: Prepared, params: Params, pl=None) -> list[dict]:
+def run_state_machine(p: Prepared, params: Params, pl=None, trace: list | None = None) -> list[dict]:
     """Run the daily loop over a prepared symbol. Returns a list of completed-trade dicts.
 
     If ``pl`` is given, each trade is also booked via ``pl.addnew(+1, entry)`` /
     ``pl.addnew(-1, exit)`` (unit = 1), so the existing accounting layer can produce its stats.
+
+    If ``trace`` is a list, one per-bar state snapshot dict is appended to it for every bar
+    (close, 52-week high, ATR, dollar volume, the live stop levels, and any entry/exit event).
+    This is **off by default** (``trace=None``) so the parameter sweep pays no cost; it exists for
+    single-symbol troubleshooting via ``src/analyze.py``.
     """
     close, atr, dt, date = p.close, p.atr, p.dt, p.date
+    low, open_ = p.low, p.open
     n = len(close)
+    record_trace = trace is not None
 
     trades: list[dict] = []
     in_position = False
@@ -94,6 +105,23 @@ def run_state_machine(p: Prepared, params: Params, pl=None) -> list[dict]:
             "exit_reason": reason,
         })
 
+    nan = float("nan")
+
+    def _snap(t: int, event: str, dyn: float, atrs: float, finals: float, reason: str) -> None:
+        held = in_position
+        trace.append({
+            "i": t, "ts": int(dt[t]), "date": str(date[t]),
+            "close": float(close[t]),
+            "roll_max": float(p.roll_max[t]),
+            "atr": float(atr[t]),
+            "advol": float(p.advol[t]),
+            "in_position": held,
+            "entry_price": float(entry_price) if held else nan,
+            "peak_price": float(peak_price) if held else nan,
+            "dynamic_stop": dyn, "atr_stop": atrs, "final_stop": finals,
+            "event": event, "exit_reason": reason,
+        })
+
     for t in range(n):
         if not in_position:
             if t > frozen_until and _entry_signal(t, p, params):
@@ -104,9 +132,40 @@ def run_state_machine(p: Prepared, params: Params, pl=None) -> list[dict]:
                 entry_i = t
                 if pl is not None:
                     pl.addnew(1, float(entry_price), int(dt[t]), 1.0)
+                if record_trace:
+                    _snap(t, "entry", dynamic_stop, nan, nan, "")
+            elif record_trace:
+                _snap(t, "", nan, nan, nan, "")
             continue
 
         # in position
+        if params.intrabar_stops:
+            # Realistic exits (A1+A2). The stop carried into this bar uses the trail/lock as of the
+            # PRIOR bars; the bar's Low triggers it and a gap-down fills at the Open. The trail/lock
+            # only roll forward on today's close, AFTER the intraday check — no same-bar look-ahead.
+            atr_t = atr[t]
+            atr_stop = -np.inf if np.isnan(atr_t) else peak_price - params.atr_multiplier * atr_t
+            final_stop = max(dynamic_stop, atr_stop)
+            atr_disp = nan if np.isinf(atr_stop) else atr_stop
+            if low[t] <= final_stop:                         # the bar's low pierced the stop (A2)
+                reason = _exit_reason(dynamic_stop, atr_stop, entry_price)
+                fill_price = min(final_stop, open_[t])       # gap-down opens fill at the open (A1)
+                _record(t, fill_price, reason)
+                if record_trace:
+                    _snap(t, "exit", dynamic_stop, atr_disp, final_stop, reason)
+                in_position = False
+                if fill_price < entry_price:                 # losing exit -> cooldown
+                    frozen_until = t + params.freeze_days
+            else:
+                if record_trace:
+                    _snap(t, "", dynamic_stop, atr_disp, final_stop, "")
+                if close[t] > peak_price:                    # roll the trail/lock forward for tomorrow
+                    peak_price = close[t]
+                if close[t] >= entry_price * (1.0 + params.breakeven_trigger_pct):
+                    dynamic_stop = max(dynamic_stop, entry_price * (1.0 + params.breakeven_lock_pct))
+            continue
+
+        # close-confirmed exits (original semantics)
         if close[t] > peak_price:
             peak_price = close[t]
         if close[t] >= entry_price * (1.0 + params.breakeven_trigger_pct):
@@ -115,13 +174,18 @@ def run_state_machine(p: Prepared, params: Params, pl=None) -> list[dict]:
         atr_t = atr[t]
         atr_stop = -np.inf if np.isnan(atr_t) else peak_price - params.atr_multiplier * atr_t
         final_stop = max(dynamic_stop, atr_stop)
+        atr_disp = nan if np.isinf(atr_stop) else atr_stop
 
         if close[t] <= final_stop:
             reason = _exit_reason(dynamic_stop, atr_stop, entry_price)
             _record(t, final_stop, reason)
+            if record_trace:
+                _snap(t, "exit", dynamic_stop, atr_disp, final_stop, reason)
             in_position = False
             if final_stop < entry_price:                    # losing exit -> cooldown
                 frozen_until = t + params.freeze_days
+        elif record_trace:
+            _snap(t, "", dynamic_stop, atr_disp, final_stop, "")
 
     if in_position and params.force_close_at_end and n:
         last = n - 1

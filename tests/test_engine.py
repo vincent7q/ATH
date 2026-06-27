@@ -15,7 +15,7 @@ BASE_TS = 1_600_000_000  # arbitrary fixed unix epoch (Date strings derived from
 DAY = 86_400
 
 
-def make_df(closes, highs=None, lows=None, volumes=None, stock="TEST"):
+def make_df(closes, highs=None, lows=None, volumes=None, opens=None, stock="TEST"):
     closes = [float(c) for c in closes]
     n = len(closes)
     highs = closes if highs is None else [float(h) for h in highs]
@@ -23,7 +23,7 @@ def make_df(closes, highs=None, lows=None, volumes=None, stock="TEST"):
     volumes = [1_000_000.0] * n if volumes is None else [float(v) for v in volumes]
     dt = [BASE_TS + i * DAY for i in range(n)]
     date = [pd.to_datetime(ts, unit="s").strftime("%Y-%m-%d") for ts in dt]
-    opens = closes[:]  # open == close; immaterial to the close-driven engine
+    opens = closes[:] if opens is None else [float(o) for o in opens]  # defaults to close
     return pd.DataFrame(
         {"stock": stock, "DT": dt, "Date": date, "Open": opens,
          "Close": closes, "High": highs, "Low": lows, "Volume": volumes}
@@ -136,3 +136,64 @@ def test_pl_instance_records_completed_trade():
     n, total_pl_pct = pl.statistics()
     assert n == 1
     assert total_pl_pct == pytest.approx(-5.0)
+
+
+def test_trace_records_per_bar_snapshots():
+    # Same scenario as test_hard_stop_exit: enter @100 on bar 1, hard-stop @95 on bar 2.
+    df = make_df([99, 100, 94])
+    p = engine.prepare_symbol(df, atr_period=2, roll_window=2, dollar_vol_window=1)
+    trace: list = []
+    trades = engine.run_state_machine(
+        p, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.06), trace=trace)
+
+    assert len(trades) == 1 and trades[0]["exit_reason"] == "hard_stop"
+    assert len(trace) == len(df) == 3           # exactly one snapshot per bar
+
+    assert trace[0]["event"] == "" and trace[0]["in_position"] is False   # flat, no breakout yet
+    assert trace[1]["event"] == "entry" and trace[1]["in_position"] is True
+    assert trace[1]["entry_price"] == pytest.approx(100.0)
+    assert trace[1]["dynamic_stop"] == pytest.approx(95.0)                # initial hard stop
+    assert trace[2]["event"] == "exit" and trace[2]["exit_reason"] == "hard_stop"
+    assert trace[2]["final_stop"] == pytest.approx(95.0)
+    assert trace[2]["close"] == pytest.approx(94.0)
+
+
+def test_trace_does_not_change_trades():
+    # Tracing is observation-only: identical trades with and without a trace sink.
+    df = make_df([99, 100, 90, 91, 92, 93])
+    params = _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50,
+                freeze_days=2, force_close_at_end=True)
+    untraced = engine.run_symbol(df, params)
+    p = engine.prepare_symbol(df, atr_period=2, roll_window=2, dollar_vol_window=1)
+    sink: list = []
+    traced = engine.run_state_machine(p, params, trace=sink)
+    assert traced == untraced
+    assert len(sink) == len(df)
+
+
+def test_intrabar_stop_triggers_on_low_not_close():
+    # bar1 enter @100, hard stop 95. bar2 CLOSES at 98 (above 95) but its LOW pierces to 94.
+    df = make_df([99, 100, 98], highs=[99, 100, 101], lows=[99, 100, 94], opens=[99, 100, 98])
+    # close-based (default): close 98 > 95 -> never stops out, position runs to the end, no trade.
+    assert engine.run_symbol(df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50)) == []
+    # intrabar: the low taps the stop -> exit; bar opened above the stop so it fills AT the stop.
+    trades = engine.run_symbol(
+        df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50, intrabar_stops=True))
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "hard_stop"
+    assert trades[0]["exit_price"] == pytest.approx(95.0)
+    assert trades[0]["pnl_pct"] == pytest.approx(-5.0)
+
+
+def test_gap_through_fills_at_open_not_stop():
+    # bar1 enter @100, hard stop 95. bar2 GAPS down: opens 92 (below the 95 stop), low 88.
+    df = make_df([99, 100, 90], highs=[99, 100, 92], lows=[99, 100, 88], opens=[99, 100, 92])
+    # close-based: optimistic fill exactly at the 95 stop.
+    t_close = engine.run_symbol(df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50))
+    assert t_close[0]["exit_price"] == pytest.approx(95.0)
+    assert t_close[0]["pnl_pct"] == pytest.approx(-5.0)
+    # intrabar: bar opened below the stop, so the realistic fill is the open (92) -> a bigger loss.
+    t_real = engine.run_symbol(
+        df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50, intrabar_stops=True))
+    assert t_real[0]["exit_price"] == pytest.approx(92.0)
+    assert t_real[0]["pnl_pct"] == pytest.approx(-8.0)

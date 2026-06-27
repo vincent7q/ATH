@@ -22,6 +22,9 @@ class Params:
 
     # --- behaviour switches ---
     force_close_at_end: bool = False      # mark-to-market any position still open at last bar
+    intrabar_stops: bool = False          # realistic exits: trigger on the bar's Low (not close) and
+                                          # fill at min(stop, Open) so gap-downs fill at the open, not
+                                          # the stop. Off = the original close-based fill at the stop.
 
 
 # Default sweep grid — modest so the full run finishes quickly; widen toward PRD §4 as needed.
