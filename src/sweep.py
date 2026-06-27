@@ -20,8 +20,8 @@ def iter_combos(grid: dict):
 def run_sweep(prepared_list, grid: dict = DEFAULT_SWEEP, fixed: dict | None = None) -> list[dict]:
     """Run every parameter combination over the pre-prepared symbols.
 
-    ``fixed`` supplies non-swept Params overrides (e.g. ``entry_mode``, indicator windows) and is
-    not echoed into the result rows. Each result row = the swept combo + the five PRD metrics.
+    ``fixed`` supplies non-swept Params overrides (e.g. indicator windows, ``force_close_at_end``)
+    and is not echoed into the result rows. Each result row = the swept combo + the five PRD metrics.
     """
     fixed = fixed or {}
     results = []

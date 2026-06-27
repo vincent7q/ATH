@@ -31,15 +31,16 @@ def make_df(closes, highs=None, lows=None, volumes=None, stock="TEST"):
 
 
 def _p(**kw):
-    """Params with test-friendly small windows so positions open on bar 0."""
+    """Params with test-friendly small windows. Entry needs a breakout, so the earliest a
+    position can open is bar 1 (bar 0 has no prior close to break out over)."""
     base = dict(min_dollar_vol=0.0, ipo_min_days=1, atr_period=2,
-                roll_window=2, dollar_vol_window=1, entry_mode="literal")
+                roll_window=2, dollar_vol_window=1)
     base.update(kw)
     return Params(**base)
 
 
 def test_hard_stop_exit():
-    df = make_df([100, 94])
+    df = make_df([99, 100, 94])           # bar1 breaks out over 99 -> enter @100; bar2 stops out
     trades = engine.run_symbol(df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.06))
     assert len(trades) == 1
     t = trades[0]
@@ -50,8 +51,8 @@ def test_hard_stop_exit():
 
 
 def test_breakeven_lock_exit():
-    # price spikes to +7% (arms Rule 4 at +6%, locks stop at +1%), then falls back.
-    df = make_df([100, 107, 100], highs=[100, 108, 101], lows=[100, 103, 99])
+    # bar1 breaks out @100; price spikes to +7% (arms Rule 4 at +6%, locks stop at +1%), then falls back.
+    df = make_df([99, 100, 107, 100], highs=[99, 100, 108, 101], lows=[99, 100, 103, 99])
     trades = engine.run_symbol(
         df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.06, breakeven_lock_pct=0.01,
                atr_multiplier=2.5))
@@ -63,8 +64,8 @@ def test_breakeven_lock_exit():
 
 
 def test_atr_trailing_exit():
-    # gentle climb to 104 then pullback; ATR stays 1 (steps of 1), trail = 104 - 2.5*1 = 101.5
-    closes = [100, 101, 102, 103, 104, 103, 102, 101]
+    # bar1 breaks out @100; gentle climb to 104 then pullback; ATR stays 1, trail = 104 - 2.5*1 = 101.5
+    closes = [99, 100, 101, 102, 103, 104, 103, 102, 101]
     df = make_df(closes)
     trades = engine.run_symbol(
         df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50, atr_multiplier=2.5))
@@ -82,43 +83,55 @@ def test_liquidity_filter_blocks_entry():
 
 
 def test_loss_freeze_blocks_then_allows_reentry():
-    # lose on bar 1 -> freeze bars 2,3 -> re-entry allowed at bar 4 (frozen_until = 1 + 2 = 3)
-    df = make_df([100, 90, 100, 100, 100, 100])
+    # bar1 breaks out @100; lose on bar 2 -> freeze bars 3,4 -> re-entry at bar 5 (frozen_until = 2 + 2 = 4).
+    # bar4 would itself break out (92 >= max(91,90)) but is still frozen, proving the lockout holds.
+    df = make_df([99, 100, 90, 91, 92, 93])
     trades = engine.run_symbol(
         df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50,
                freeze_days=2, force_close_at_end=True))
     assert len(trades) == 2
-    assert trades[0]["entry_ts"] == BASE_TS + 0 * DAY
+    assert trades[0]["entry_ts"] == BASE_TS + 1 * DAY
     assert trades[0]["pnl_pct"] < 0
-    # second entry must be bar 4, NOT bar 2 or 3 (those were frozen)
-    assert trades[1]["entry_ts"] == BASE_TS + 4 * DAY
+    # second entry must be bar 5, NOT bar 3 or 4 (those were frozen)
+    assert trades[1]["entry_ts"] == BASE_TS + 5 * DAY
 
 
 def test_freeze_days_zero_allows_immediate_reentry():
-    df = make_df([100, 90, 100, 100])
+    df = make_df([99, 100, 90, 100])                     # bar1 enter @100; bar2 stops out
     trades = engine.run_symbol(
         df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.50,
                freeze_days=0, force_close_at_end=True))
     assert len(trades) == 2
-    assert trades[1]["entry_ts"] == BASE_TS + 2 * DAY    # re-enters immediately after the loss bar
+    assert trades[1]["entry_ts"] == BASE_TS + 3 * DAY    # re-enters on the bar right after the loss-exit bar
 
 
-def test_literal_vs_momentum_entry_timing_differs():
-    # declining then a new high on bar 3. Literal: age clause enters early (bar 1).
-    # Momentum: needs close >= prior all-time high -> only bar 3.
+def test_entry_requires_new_high():
+    # declining then a new high on bar 3 -> entry only fires on the breakout bar, never on the
+    # earlier (non-breakout) bars. Confirms the age floor alone does NOT open a position.
     closes = [100, 99, 98, 101]
-    common = dict(initial_cutloss_pct=0.99, breakeven_trigger_pct=0.99,
-                  ipo_min_days=2, force_close_at_end=True)
-    lit = engine.run_symbol(make_df(closes), _p(entry_mode="literal", **common))
-    mom = engine.run_symbol(make_df(closes), _p(entry_mode="momentum", **common))
-    assert lit[0]["entry_ts"] == BASE_TS + 1 * DAY
-    assert mom[0]["entry_ts"] == BASE_TS + 3 * DAY
+    trades = engine.run_symbol(
+        make_df(closes),
+        _p(initial_cutloss_pct=0.99, breakeven_trigger_pct=0.99,
+           ipo_min_days=2, force_close_at_end=True))
+    assert len(trades) == 1
+    assert trades[0]["entry_ts"] == BASE_TS + 3 * DAY
+
+
+def test_entry_blocked_until_ipo_age_floor():
+    # bar1 already breaks out (101 >= 100) but is too young; entry waits until the age floor is met.
+    closes = [100, 101, 102, 103]
+    trades = engine.run_symbol(
+        make_df(closes),
+        _p(initial_cutloss_pct=0.99, breakeven_trigger_pct=0.99,
+           ipo_min_days=3, force_close_at_end=True))
+    assert len(trades) == 1
+    assert trades[0]["entry_ts"] == BASE_TS + 2 * DAY    # bar2 is the first bar with days_since_ipo >= 3
 
 
 def test_pl_instance_records_completed_trade():
     from profitandloss_v3 import PL
     pl = PL("TEST", days_of_trading_per_year=252)
-    df = make_df([100, 94])
+    df = make_df([99, 100, 94])           # bar1 breaks out @100; bar2 stops out at 95
     engine.run_symbol(df, _p(initial_cutloss_pct=0.05, breakeven_trigger_pct=0.06), pl=pl)
     n, total_pl_pct = pl.statistics()
     assert n == 1

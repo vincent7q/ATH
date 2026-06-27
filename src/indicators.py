@@ -11,9 +11,9 @@ def rolling_high(close: pd.Series, window: int = 252, min_periods: int | None = 
     """52-week rolling high: ``Roll_Max_t = max(C_{t-1} … C_{t-window})``.
 
     Excludes today's close (``shift(1)``). With the default ``min_periods == window`` the
-    result is NaN until a full ``window`` of prior closes exists (literal SPEC). Pass a smaller
-    ``min_periods`` (e.g. 1) to take the max over *available* history — used by the
-    "momentum" entry mode so young IPOs have a valid breakout reference.
+    result is NaN until a full ``window`` of prior closes exists. Pass a smaller ``min_periods``
+    (e.g. 1) to take the max over *available* history, so a young IPO past the age floor still has
+    a valid breakout reference — this is how the engine computes its entry breakout.
     """
     if min_periods is None:
         min_periods = window

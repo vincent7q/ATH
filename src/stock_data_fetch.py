@@ -211,8 +211,8 @@ if __name__ == '__main__':
     import os
 
     here = os.path.dirname(os.path.abspath(__file__))
-    stockfile = os.path.join(here, 'stock_list.txt')
-    DBFILE = os.path.join(here, 'data.db')
+    stockfile = os.path.join(here, 'stock_list.txt')     ## stock_list.txt/ipo.txt
+    DBFILE = os.path.join(here, 'stocks.db')          ##stocks.db/ipo.db
 
     # ~5-year horizon ending today (PRD §1).
     end_date = datetime.date.today().isoformat()

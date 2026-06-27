@@ -30,30 +30,30 @@ populated), `src/profitandloss_v3.py`, `src/stock_data_fetch.py`, `src/stock_lis
 swap — see Open Questions #2). Generated/optional-to-ignore: `__pycache__/`, `results_*.csv`.
 Consider committing `src/data.db` if you want data available tomorrow without re-fetching.
 
-**The 2 decisions waiting on you:** (details below)
-- Entry mode default — `literal` (current) vs `momentum` (recommended). One-line change in `src/config.py`.
+**The 1 decision waiting on you:** (details below)
 - Universe — keep 6 HK tickers vs restore 451 US tickers in `src/stock_list.txt`.
+
+**Resolved:** entry-gate semantics — the engine now uses a single breakout-AND-age entry; the
+`entry_mode` flag and the old `literal` (OR) interpretation have been removed (see below).
 
 ---
 
-## ⚠️ TOP DECISION (needs your call) — entry-gate semantics
+## ✅ RESOLVED — entry-gate semantics
 
-`SPEC.md` §2.B writes the entry trigger as
-`(close >= roll_max) OR (days_since_ipo >= ipo_min_days)`. Literally, the OR makes the
-**52-week-high breakout irrelevant for any stock older than 30 trading days** (it would enter on
-nearly every non-frozen bar). I've implemented this behind an `entry_mode` flag in `config.py`:
+The original `SPEC.md` §2.B wrote the entry trigger with an **OR**
+(`(close >= roll_max) OR (days_since_ipo >= ipo_min_days)`), which made the 52-week-high breakout
+irrelevant for any stock older than 30 trading days (it entered on nearly every non-frozen bar).
 
-- `entry_mode="literal"` — exactly as SPEC reads (current default).
-- `entry_mode="momentum"` *(recommended)* — `close >= roll_max(available history)` **AND**
-  `days_since_ipo >= ipo_min_days` (IPO floor = young-stock allowance, not a blanket pass).
+**Decision (shipped):** there is now a single entry rule —
+`close >= roll_max(available history)` **AND** `days_since_ipo >= ipo_min_days` **AND** liquidity.
+The `entry_mode` flag and the `literal` interpretation have been removed from the code, and
+`PRD.md` / `SPEC.md` were updated to the AND form. The IPO age floor is a gate on the breakout,
+not a blanket entry path.
 
-**Action:** tell me which to make the default. Everything else works the same either way.
-
-**Concrete evidence** (full sweep on the real 6-ticker `data.db`, see `results_*.csv`):
-`literal` enters ~**555 trades** in a representative combo (the age clause fires on nearly every
-bar); `momentum` enters ~**21 trades** of genuine breakouts (best combo: win 71%, profit factor
-9.4, net +567%, max drawdown −9.75%). This is the difference the flag controls. **My
-recommendation: make `momentum` the default.**
+**Why** (full sweep on the real 6-ticker `data.db`): the old `literal`/OR path entered
+~**555 trades** in a representative combo (the age clause fired on nearly every bar); the
+breakout-AND-age rule enters ~**21 trades** of genuine breakouts (best combo: win 71%, profit
+factor 9.4, net +567%, max drawdown −9.75%).
 
 ---
 
@@ -81,7 +81,7 @@ recommendation: make `momentum` the default.**
 ### Phase 3 — Engine (`src/engine.py`) — TDD
 - ☐ `run_symbol(df, params)` — verbatim SPEC §2.B state machine on numpy arrays
 - ☐ Wire to `PL` (one instance per symbol, `days_of_trading_per_year=252`, unit=1)
-- ☐ `entry_mode` flag (literal vs momentum)
+- ☑ Single breakout-AND-age entry rule (`entry_mode` flag removed)
 - ☐ Tests: breakout entry, Rule 4 lock, ATR-trail exit, `max()` clause, freeze off-by-one,
       no re-entry while frozen, `freeze_days=0` disables
 - ☐ `run_backtest(params)` over all symbols → master trade list
@@ -112,7 +112,7 @@ recommendation: make `momentum` the default.**
 - Open positions at end-of-data left open (faithful to SPEC); `forcetoclosetrade` available behind a flag.
 
 ## Open questions
-1. Entry-gate semantics (see TOP DECISION). Default = `literal`; recommend `momentum`.
+1. ~~Entry-gate semantics~~ — **resolved**: single breakout-AND-age entry; `entry_mode` removed.
 2. **Universe:** `src/stock_list.txt` currently holds **6 Hong Kong tickers** (0700.HK, 3690.HK,
    2513.HK, 1810.HK, 1024.HK, 9988.HK) — `data.db` was loaded from these. The committed version
    had 451 US tickers; it was swapped during the session (not by me). To use the US universe:
@@ -123,7 +123,7 @@ recommendation: make `momentum` the default.**
    so that sweep axis is currently inert for this universe — expected, not a bug.
 
 ## Optional backlog (none blocking — the engine is complete & tested)
-- ☐ **Flip entry-mode default** to `momentum` in `src/config.py` (`Params.entry_mode`) once decided.
+- ☑ **Entry rule finalized** — single breakout-AND-age gate; `entry_mode` flag removed from `src/config.py`.
 - ☐ **Widen the sweep grid** toward full PRD §4 ranges in `config.DEFAULT_SWEEP` (currently 540 combos).
       Note: runtime scales with combos × symbols × bars — re-check wall-clock if you 10× the grid.
 - ☐ **`force_close_at_end`** — currently `False` (positions open at the last bar are excluded from

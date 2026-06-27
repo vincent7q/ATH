@@ -21,16 +21,15 @@ class Params:
     dollar_vol_window: int = 5
 
     # --- behaviour switches ---
-    entry_mode: str = "literal"           # "literal" (SPEC verbatim) | "momentum" (recommended)
     force_close_at_end: bool = False      # mark-to-market any position still open at last bar
 
 
 # Default sweep grid — modest so the full run finishes quickly; widen toward PRD §4 as needed.
 DEFAULT_SWEEP = {
-    "initial_cutloss_pct": [0.03, 0.05, 0.08],
-    "breakeven_trigger_pct": [0.06, 0.10],
+    "initial_cutloss_pct": [0.03, 0.04, 0.05, 0.06, 0.07,0.08],
+    "breakeven_trigger_pct": [0.06, 0.08, 0.10],
     "breakeven_lock_pct": [0.01, 0.02],
-    "atr_multiplier": [2.0, 2.5, 3.0],
+    "atr_multiplier": [1.5,2.0, 2.5, 3.0],
     "min_dollar_vol": [500_000.0, 1_000_000.0, 5_000_000.0],
-    "freeze_days": [0, 5, 10, 20, 30],
+    "freeze_days": [0, 10, 20, 30],
 }

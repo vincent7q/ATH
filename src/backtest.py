@@ -1,20 +1,43 @@
-"""CLI entry point: load `data.db`, run the parameter sweep, write a results matrix CSV.
+"""Entry point: load `stocks.db`, run the parameter sweep, write a results matrix CSV.
 
-Usage:
-    python src/backtest.py                       # full default grid, literal entry mode
-    python src/backtest.py --entry-mode momentum # recommended interpretation (see progress.md)
-    python src/backtest.py --limit 20 --out small.csv
+No command-line arguments — edit the PARAMETERS block below, then run directly:
+
+    python src/backtest.py
 """
-import argparse
 import csv
 import os
 
 import db
 import engine
 import sweep
-from config import DEFAULT_SWEEP
 
-DEFAULT_DB = os.path.join(os.path.dirname(__file__), "data.db")
+# ============================================================================
+# PARAMETERS — edit these, then run:  python src/backtest.py
+# ============================================================================
+
+# --- Run options ---
+DB_PATH = os.path.join(os.path.dirname(__file__), "ipo.db")  # price database
+OUT_PATH = "report_ipo.csv"       # output CSV (parameter matrix)
+FORCE_CLOSE = True                # mark-to-market positions still open at the last bar
+LIMIT = None                      # cap number of symbols (e.g. 20 for a quick test); None = all
+
+# --- Indicator windows (fixed across the whole sweep) ---
+ATR_PERIOD = 14
+ROLL_WINDOW = 252
+DOLLAR_VOL_WINDOW = 5
+
+# --- Parameter sweep grid (one CSV row per combination) ---
+SWEEP_GRID = {
+    "initial_cutloss_pct": [0.03, 0.04, 0.05, 0.06, 0.07,0.08],
+    "breakeven_trigger_pct": [0.06, 0.08, 0.10],
+    "breakeven_lock_pct": [0.01, 0.02],
+    "atr_multiplier": [1.5,2.0, 2.5, 3.0],
+    "min_dollar_vol": [500_000.0, 1_000_000.0, 5_000_000.0],
+    "freeze_days": [0, 10, 20, 30],
+}
+
+# ============================================================================
+
 METRIC_COLS = ["trade_count", "win_rate_pct", "net_profit_pct", "profit_factor", "max_drawdown_pct"]
 
 
@@ -29,7 +52,7 @@ def prepare_all(conn, symbols, atr_period=14, roll_window=252, dollar_vol_window
     return prepared
 
 
-def run(db_path, grid=DEFAULT_SWEEP, entry_mode="literal", force_close=False, limit=None,
+def run(db_path, grid=SWEEP_GRID, force_close=False, limit=None,
         atr_period=14, roll_window=252, dollar_vol_window=5, fixed_overrides=None):
     """Load the DB, prepare every symbol once, and run the full sweep. Returns result rows."""
     conn = db.connect(db_path)
@@ -41,7 +64,7 @@ def run(db_path, grid=DEFAULT_SWEEP, entry_mode="literal", force_close=False, li
     finally:
         conn.close()
 
-    fixed = {"entry_mode": entry_mode, "force_close_at_end": force_close,
+    fixed = {"force_close_at_end": force_close,
              "atr_period": atr_period, "roll_window": roll_window,
              "dollar_vol_window": dollar_vol_window}
     if fixed_overrides:
@@ -49,7 +72,7 @@ def run(db_path, grid=DEFAULT_SWEEP, entry_mode="literal", force_close=False, li
     return sweep.run_sweep(prepared, grid, fixed=fixed)
 
 
-def write_csv(rows, path, grid=DEFAULT_SWEEP):
+def write_csv(rows, path, grid=SWEEP_GRID):
     cols = list(grid.keys()) + METRIC_COLS
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
@@ -58,19 +81,12 @@ def write_csv(rows, path, grid=DEFAULT_SWEEP):
             w.writerow({c: r.get(c) for c in cols})
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="ATH momentum backtest parameter sweep")
-    ap.add_argument("--db", default=DEFAULT_DB)
-    ap.add_argument("--out", default="results.csv")
-    ap.add_argument("--entry-mode", choices=["literal", "momentum"], default="literal")
-    ap.add_argument("--force-close", action="store_true",
-                    help="mark-to-market positions still open at the last bar")
-    ap.add_argument("--limit", type=int, default=None, help="cap number of symbols (debugging)")
-    args = ap.parse_args(argv)
-
-    rows = run(args.db, entry_mode=args.entry_mode, force_close=args.force_close, limit=args.limit)
-    write_csv(rows, args.out)
-    print(f"Wrote {len(rows)} parameter rows -> {args.out}")
+def main():
+    rows = run(DB_PATH, grid=SWEEP_GRID, force_close=FORCE_CLOSE,
+               limit=LIMIT, atr_period=ATR_PERIOD, roll_window=ROLL_WINDOW,
+               dollar_vol_window=DOLLAR_VOL_WINDOW)
+    write_csv(rows, OUT_PATH, grid=SWEEP_GRID)
+    print(f"Wrote {len(rows)} parameter rows -> {OUT_PATH}")
 
 
 if __name__ == "__main__":

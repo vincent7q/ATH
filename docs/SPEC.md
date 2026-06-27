@@ -17,6 +17,7 @@ The Python script must pull data sequentially by symbol or chunked into an optim
 For each stock dataframe, calculate the required indicator vectors *before* loop execution to minimize runtime calculations:
 1.  **52-Week High (252-day Rolling Maximum):**
     $$\text{Roll\_Max}_{t} = \max(C_{t-1}, C_{t-2}, \dots, C_{t-252})$$
+    Computed over *available* history (a partial window is used until 252 prior closes exist), so a young IPO past the age floor still has a valid breakout reference.
 2.  **Average True Range (ATR - 14 Days):**
     $$\text{TR}_t = \max([H_t - L_t], |H_t - C_{t-1}|, |L_t - C_{t-1}|)$$
     $$\text{ATR}_t = \frac{1}{14}\sum_{i=0}^{13}\text{TR}_{t-i} \quad \text{(or Wilders Smoothing)}$$
@@ -39,7 +40,7 @@ if not in_position:
     # Entry Condition Check — gated by the loss-cooldown freeze (t > frozen_until).
     # A losing exit on bar k freezes bars k+1 .. k+freeze_days; re-entry resumes at k+freeze_days+1.
     # With freeze_days == 0, frozen_until == k and the next entry check (t = k+1 > k) is unaffected -> disabled.
-    if t > frozen_until and (close[t] >= roll_max[t] or days_since_ipo[t] >= ipo_min_days) and (avg_dollar_vol[t] > min_dollar_vol):
+    if t > frozen_until and (close[t] >= roll_max[t]) and (days_since_ipo[t] >= ipo_min_days) and (avg_dollar_vol[t] > min_dollar_vol):
         in_position = True
         entry_price = close[t]
         peak_price = close[t]

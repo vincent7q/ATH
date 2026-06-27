@@ -24,8 +24,7 @@ class Prepared:
     atr: np.ndarray
     advol: np.ndarray
     ipo: np.ndarray
-    roll_max_strict: np.ndarray      # full 252-window high (literal entry mode)
-    roll_max_available: np.ndarray   # available-history high (momentum entry mode)
+    roll_max: np.ndarray             # 52-week high over available history (breakout reference)
 
 
 def prepare_symbol(df: pd.DataFrame, atr_period: int = 14, roll_window: int = 252,
@@ -42,21 +41,21 @@ def prepare_symbol(df: pd.DataFrame, atr_period: int = 14, roll_window: int = 25
         atr=indicators.atr_wilder(df["High"], df["Low"], close, atr_period).to_numpy(dtype=float),
         advol=indicators.avg_dollar_volume(close, df["Volume"], dollar_vol_window).to_numpy(dtype=float),
         ipo=indicators.days_since_ipo(n),
-        roll_max_strict=indicators.rolling_high(close, roll_window, roll_window).to_numpy(dtype=float),
-        roll_max_available=indicators.rolling_high(close, roll_window, 1).to_numpy(dtype=float),
+        roll_max=indicators.rolling_high(close, roll_window, 1).to_numpy(dtype=float),
     )
 
 
 def _entry_signal(t: int, p: Prepared, params: Params) -> bool:
-    """Entry gate (docs/SPEC.md §2.B line 42 / PRD §2). NaN comparisons evaluate False."""
-    if not (p.advol[t] > params.min_dollar_vol):       # liquidity filter (strict >)
-        return False
-    if params.entry_mode == "momentum":
-        breakout = p.close[t] >= p.roll_max_available[t]
-        return bool(breakout and p.ipo[t] >= params.ipo_min_days)
-    # literal SPEC: breakout OR enough lifetime history
-    breakout = p.close[t] >= p.roll_max_strict[t]
-    return bool(breakout or p.ipo[t] >= params.ipo_min_days)
+    """Entry gate (docs/SPEC.md §2.B / PRD §2): liquidity AND breakout AND IPO-age floor.
+
+    All three conditions must hold. NaN comparisons evaluate False, so a young stock without a
+    valid breakout reference cannot enter.
+    """
+    return bool(
+        p.advol[t] > params.min_dollar_vol          # liquidity filter (strict >)
+        and p.close[t] >= p.roll_max[t]             # breakout to the 52-week high
+        and p.ipo[t] >= params.ipo_min_days         # past the young-IPO age floor
+    )
 
 
 def _exit_reason(dynamic_stop: float, atr_stop: float, entry_price: float) -> str:
@@ -75,7 +74,6 @@ def run_state_machine(p: Prepared, params: Params, pl=None) -> list[dict]:
     """
     close, atr, dt, date = p.close, p.atr, p.dt, p.date
     n = len(close)
-    roll_max = p.roll_max_available if params.entry_mode == "momentum" else p.roll_max_strict
 
     trades: list[dict] = []
     in_position = False

@@ -22,19 +22,20 @@ python src/stock_data_fetch.py
 
 ## 2. Run the parameter sweep
 
-Runs the strategy across the `DEFAULT_SWEEP` grid (cutloss %, breakeven trigger/lock %,
-ATR multiplier, min dollar-volume tiers, freeze-days) and writes one row per combination with
-Net Profit %, Profit Factor, Max Drawdown %, Win Rate, and Trade Count.
+Runs the strategy across the `SWEEP_GRID` (cutloss %, breakeven trigger/lock %, ATR multiplier,
+min dollar-volume tiers, freeze-days) and writes one row per combination with Net Profit %,
+Profit Factor, Max Drawdown %, Win Rate, and Trade Count.
+
+There are no command-line arguments — edit the parameters block at the top of `src/backtest.py`
+(DB path, output path, force-close, symbol limit, indicator windows, and the sweep grid), then run:
 
 ```bash
-python src/backtest.py --entry-mode momentum --out results.csv
-# options: --entry-mode {literal|momentum}  --force-close  --limit N  --db PATH
+python src/backtest.py
 ```
 
-**Entry mode** — `momentum` (recommended) enters only on a genuine break to the all-time high;
-`literal` follows the SPEC verbatim, where the IPO age-clause makes the breakout filter moot for
-mature names (see the decision note in `progress.md`). Widen the search space by editing
-`config.DEFAULT_SWEEP`.
+**Entry rule** — a position opens only on a genuine breakout: the close must reach the 52-week
+high (over available history) **and** the symbol must be past the IPO age floor (`ipo_min_days`,
+default 30) **and** clear the dollar-volume liquidity gate.
 
 ## Architecture (`src/`)
 

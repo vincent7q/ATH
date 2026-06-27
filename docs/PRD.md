@@ -8,7 +8,7 @@ The system must facilitate automated parameter sweeps and multi-variable optimiz
 ## 2. Core Trading Strategy Specifications
 The engine must strictly enforce the following algorithmic logic per asset-session:
 
-* **Entry Trigger (Momentum Breakout):** An entry signal is generated on day $t$ if the closing price $C_t$ matches or exceeds the 52-week (252 trading days) all-time high, OR if the asset is an IPO with a lifetime trading history matching or exceeding a configurable floor parameter ($\ge N$ days, default 30).
+* **Entry Trigger (Momentum Breakout):** An entry signal is generated on day $t$ only when **both** conditions hold: (1) the closing price $C_t$ matches or exceeds the 52-week (252 trading days) high computed over the asset's available history, **AND** (2) the asset has a lifetime trading history matching or exceeding a configurable floor parameter ($\ge N$ days, default 30). The age floor screens out the first volatile days of a young IPO while still letting it break out over its available history; it is a gate on the breakout, not an alternative entry path.
 * **Liquidity Filter:** The rolling 5-day moving average of daily dollar volume ($\text{Close}_t \times \text{Volume}_t$) must strictly exceed a configurable dollar threshold parameter ($V_{\text{target}}$).
 * **Initial Stop-Loss Ceiling:** Upon entry, a hard stop-loss is placed at a fixed percentage below the entry price ($1 - \text{Cutloss}\%$, e.g., $-5\%$).
 * **Break-Even Profit Protection (Rule 4 Trigger):** If the market price at any point touches or exceeds a target percentage above the execution entry price ($1 + \text{Trigger}\%$, e.g., $+6\%$), the hard stop-loss value must instantly lock at a guaranteed profitable floor ($1 + \text{Lock}\%$, e.g., $+1\%$).
