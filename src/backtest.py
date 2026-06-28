@@ -16,8 +16,14 @@ import sweep
 # ============================================================================
 
 # --- Run options ---
-DB_PATH = os.path.join(os.path.dirname(__file__), "ipo.db")  # price database
-OUT_PATH = "report_ipo.csv"       # output CSV (parameter matrix)
+GROUP=2;   #1: IPOs, 2: All stocks
+if GROUP==1:
+    DB_PATH = os.path.join(os.path.dirname(__file__), "ipo.db")  # price database
+    OUT_PATH = "report_ipo.csv"       # output CSV (parameter matrix)
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), "stocks.db")  # price database
+    OUT_PATH = "report_stocks.csv"       # output CSV (parameter matrix)
+
 FORCE_CLOSE = True                # mark-to-market positions still open at the last bar
 INTRABAR_STOPS = True             # realistic exits: stop triggers on the bar Low, fills at min(stop, Open)
 LIMIT = None                      # cap number of symbols (e.g. 20 for a quick test); None = all
